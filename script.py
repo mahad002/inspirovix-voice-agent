@@ -24,7 +24,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # Twilio phone number
+TWILIO_PHONE_NUMBER = "+19033428380"  # Twilio phone number
 BUSINESS_HOURS = {'start': 9, 'end': 17}
 WEEKEND_DAYS = (5, 6)
 MINIMUM_NOTICE = datetime.timedelta(hours=1)
