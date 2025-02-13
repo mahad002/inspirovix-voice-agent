@@ -1,4 +1,5 @@
 import openai
+from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
 from flask import Flask, request, jsonify
 import datetime
@@ -21,11 +22,17 @@ load_dotenv()
 
 # Retrieve environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 BUSINESS_HOURS = {'start': 9, 'end': 17}
 WEEKEND_DAYS = (5, 6)
 MINIMUM_NOTICE = datetime.timedelta(hours=1)
 MAXIMUM_FUTURE_DAYS = 60
 MEETINGS_FILE = 'meetings.json'
+
+# Initialize Twilio client
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 # VoiceBot class to handle AI responses and meeting scheduling
 class VoiceBot:
@@ -38,7 +45,7 @@ class VoiceBot:
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4-mini",
-                messages=[ 
+                messages=[
                     {"role": "system", "content": "Analyze if the user wants to schedule a meeting or just have a conversation. Respond with either 'scheduling' or 'conversation'."},
                     {"role": "user", "content": text}
                 ]
@@ -48,10 +55,9 @@ class VoiceBot:
             logging.error(f"Error detecting intent: {e}")
             return "conversation"  # Default to 'conversation' in case of error
 
-    def get_ai_response(self, text, phone_number):
+    def get_ai_response(self, text, call_sid):
         try:
-            # Use the phone number as a conversation reference ID
-            conversation = self.conversation_state.get(phone_number, [])
+            conversation = self.conversation_state.get(call_sid, [])
             conversation.append({"role": "user", "content": text})
             intent = self.detect_intent(text)
             system_prompt = (
@@ -65,7 +71,7 @@ class VoiceBot:
             )
             ai_response = response.choices[0].message.content.strip()
             conversation.append({"role": "assistant", "content": ai_response})
-            self.conversation_state[phone_number] = conversation
+            self.conversation_state[call_sid] = conversation
             return ai_response, intent
         except openai.error.OpenAIError as e:
             logging.error(f"Error getting AI response: {e}")
@@ -183,39 +189,52 @@ def get_meetings():
         logging.error(f"Error fetching meetings: {e}")
         return jsonify({"error": "Failed to fetch meetings"}), 500
 
-# Endpoint to initiate a conversation (no actual phone call)
+# Endpoint to initiate a call
 @app.route("/voice", methods=['POST'])
-def handle_conversation():
+def handle_call():
     try:
-        # Get the phone number from the request (used as a reference ID for the conversation)
-        data = request.json
-        phone_number = data.get('phone_number')
+        # Get the phone number from the request
+        data = request.form
+        to_number = data.get('to')
         
-        if not phone_number:
+        if not to_number:
             return jsonify({"error": "Phone number is required"}), 400
 
-        # Initiate the voice interaction
-        response = VoiceResponse()
-        gather = Gather(input='speech', timeout=3, action='/process_speech')
-        gather.say("Hello! I'm your AI assistant. How can I help you today?")
-        response.append(gather)
+        # Create a call using Twilio
+        call = twilio_client.calls.create(
+            to=to_number,
+            from_=TWILIO_PHONE_NUMBER,  # Add this to your .env file
+            url=f"{request.url_root}voice_webhook"  # This will handle the TwiML
+        )
 
-        return str(response)
+        return jsonify({
+            "success": True,
+            "callSid": call.sid
+        })
     except Exception as e:
-        logging.error(f"Error initiating conversation: {e}")
+        logging.error(f"Error initiating call: {e}")
         return jsonify({"error": str(e)}), 500
 
-# Webhook that handles Twilio voice responses (for speech gathering)
+# Webhook that handles Twilio voice responses
+@app.route("/voice_webhook", methods=['POST'])
+def voice_webhook():
+    # This endpoint will handle the TwiML for Twilio
+    response = VoiceResponse()
+    gather = Gather(input='speech', timeout=3, action='/process_speech')
+    gather.say("Hello! I'm your AI assistant. How can I help you today?")
+    response.append(gather)
+    return str(response)
+
 @app.route("/process_speech", methods=['POST'])
 def process_speech():
-    phone_number = request.values.get('PhoneNumber')
+    call_sid = request.values.get('CallSid')
     speech_result = request.values.get('SpeechResult')
 
-    if not phone_number or not speech_result:
-        logging.error("Missing PhoneNumber or SpeechResult in the request")
+    if not call_sid or not speech_result:
+        logging.error("Missing CallSid or SpeechResult in the request")
         return jsonify({"error": "Invalid request"}), 400
 
-    ai_response, intent = bot.get_ai_response(speech_result, phone_number)
+    ai_response, intent = bot.get_ai_response(speech_result, call_sid)
     response = VoiceResponse()
 
     if intent == 'scheduling':
