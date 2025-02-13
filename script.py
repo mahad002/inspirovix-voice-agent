@@ -1,19 +1,26 @@
 import openai
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import datetime
 import json
 import pytz
 import os
 from dotenv import load_dotenv
 from flask_cors import CORS
+import logging
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
+# Load environment variables
 load_dotenv()
 
+# Retrieve environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
@@ -23,36 +30,51 @@ MINIMUM_NOTICE = datetime.timedelta(hours=1)
 MAXIMUM_FUTURE_DAYS = 60
 MEETINGS_FILE = 'meetings.json'
 
+# Initialize Twilio client
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+# VoiceBot class to handle AI responses and meeting scheduling
 class VoiceBot:
     def __init__(self):
         self.openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        self.twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         self.scheduler = MeetingScheduler()
         self.conversation_state = {}
 
     def detect_intent(self, text):
-        response = self.openai_client.chat.completions.create(
-            model="gpt-4-mini",
-            messages=[
-                {"role": "system", "content": "Analyze if the user wants to schedule a meeting or just have a conversation. Respond with either 'scheduling' or 'conversation'."},
-                {"role": "user", "content": text}
-            ]
-        )
-        return response.choices[0].message.content.strip().lower()
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4-mini",
+                messages=[
+                    {"role": "system", "content": "Analyze if the user wants to schedule a meeting or just have a conversation. Respond with either 'scheduling' or 'conversation'."},
+                    {"role": "user", "content": text}
+                ]
+            )
+            return response.choices[0].message.content.strip().lower()
+        except openai.error.OpenAIError as e:
+            logging.error(f"Error detecting intent: {e}")
+            return "conversation"  # Default to 'conversation' in case of error
 
     def get_ai_response(self, text, call_sid):
-        conversation = self.conversation_state.get(call_sid, [])
-        conversation.append({"role": "user", "content": text})
-        intent = self.detect_intent(text)
-        system_prompt = "You are a voice assistant that helps schedule meetings. Keep responses concise and clear. Ask for specific details needed for scheduling." if intent == 'scheduling' else "You are a friendly voice assistant. Engage in natural conversation while remembering you can help schedule meetings if needed."
-        response = self.openai_client.chat.completions.create(
-            model="gpt-4-mini",
-            messages=[{"role": "system", "content": system_prompt}, *conversation]
-        )
-        ai_response = response.choices[0].message.content.strip()
-        conversation.append({"role": "assistant", "content": ai_response})
-        self.conversation_state[call_sid] = conversation
-        return ai_response, intent
+        try:
+            conversation = self.conversation_state.get(call_sid, [])
+            conversation.append({"role": "user", "content": text})
+            intent = self.detect_intent(text)
+            system_prompt = (
+                "You are a voice assistant that helps schedule meetings. Keep responses concise and clear. Ask for specific details needed for scheduling."
+                if intent == 'scheduling' 
+                else "You are a friendly voice assistant. Engage in natural conversation while remembering you can help schedule meetings if needed."
+            )
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4-mini",
+                messages=[{"role": "system", "content": system_prompt}, *conversation]
+            )
+            ai_response = response.choices[0].message.content.strip()
+            conversation.append({"role": "assistant", "content": ai_response})
+            self.conversation_state[call_sid] = conversation
+            return ai_response, intent
+        except openai.error.OpenAIError as e:
+            logging.error(f"Error getting AI response: {e}")
+            return "Sorry, I couldn't process your request.", "conversation"
 
     def schedule_meeting(self, details):
         try:
@@ -64,8 +86,11 @@ class VoiceBot:
             )
             return success, message
         except Exception as e:
+            logging.error(f"Error scheduling meeting: {e}")
             return False, f"Failed to schedule meeting: {str(e)}"
 
+
+# MeetingScheduler class to handle scheduling logic
 class MeetingScheduler:
     def __init__(self):
         self.timezone = pytz.timezone('UTC')
@@ -128,21 +153,25 @@ class MeetingScheduler:
             self.save_meetings()
             return True, f"Meeting scheduled successfully for {start_datetime.strftime('%Y-%m-%d %H:%M')}"
         except Exception as e:
+            logging.error(f"Error scheduling meeting: {e}")
             return False, f"Failed to schedule meeting: {str(e)}"
 
+
 def extract_meeting_details(text):
-    response = bot.openai_client.chat.completions.create(
-        model="gpt-4-mini",
-        messages=[
-            {"role": "system", "content": "Extract meeting details in JSON format with keys: title, datetime, duration, attendees"},
-            {"role": "user", "content": text}
-        ]
-    )
     try:
+        response = bot.openai_client.chat.completions.create(
+            model="gpt-4-mini",
+            messages=[
+                {"role": "system", "content": "Extract meeting details in JSON format with keys: title, datetime, duration, attendees"},
+                {"role": "user", "content": text}
+            ]
+        )
         details = json.loads(response.choices[0].message.content)
         return details
-    except:
+    except Exception as e:
+        logging.error(f"Error extracting meeting details: {e}")
         return None
+
 
 bot = VoiceBot()
 
@@ -162,8 +191,14 @@ def handle_call():
 def process_speech():
     call_sid = request.values.get('CallSid')
     speech_result = request.values.get('SpeechResult')
+
+    if not call_sid or not speech_result:
+        logging.error("Missing CallSid or SpeechResult in the request")
+        return jsonify({"error": "Invalid request"}), 400
+
     ai_response, intent = bot.get_ai_response(speech_result, call_sid)
     response = VoiceResponse()
+
     if intent == 'scheduling':
         details = extract_meeting_details(speech_result)
         if details:
@@ -173,6 +208,7 @@ def process_speech():
             response.say(ai_response)
     else:
         response.say(ai_response)
+
     gather = Gather(input='speech', timeout=3, action='/process_speech')
     response.append(gather)
     return str(response)
