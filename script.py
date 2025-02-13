@@ -24,6 +24,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # Add this to your .env file
 BUSINESS_HOURS = {'start': 9, 'end': 17}
 WEEKEND_DAYS = (5, 6)
 MINIMUM_NOTICE = datetime.timedelta(hours=1)
@@ -175,12 +176,49 @@ def extract_meeting_details(text):
 
 bot = VoiceBot()
 
-@app.route("/", methods=['GET'])
-def hello():
-    return "Hello, World!"
+# Endpoint to get all meetings
+@app.route("/meetings", methods=['GET'])
+def get_meetings():
+    try:
+        if os.path.exists(MEETINGS_FILE):
+            with open(MEETINGS_FILE, 'r') as f:
+                meetings = json.load(f)
+            return jsonify(meetings)
+        return jsonify([])
+    except Exception as e:
+        logging.error(f"Error fetching meetings: {e}")
+        return jsonify({"error": "Failed to fetch meetings"}), 500
 
+# Endpoint to initiate a call
 @app.route("/voice", methods=['POST'])
 def handle_call():
+    try:
+        # Get the phone number from the request
+        data = request.form
+        to_number = data.get('to')
+        
+        if not to_number:
+            return jsonify({"error": "Phone number is required"}), 400
+
+        # Create a call using Twilio
+        call = twilio_client.calls.create(
+            to=to_number,
+            from_=TWILIO_PHONE_NUMBER,  # Add this to your .env file
+            url=f"{request.url_root}voice_webhook"  # This will handle the TwiML
+        )
+
+        return jsonify({
+            "success": True,
+            "callSid": call.sid
+        })
+    except Exception as e:
+        logging.error(f"Error initiating call: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Webhook that handles Twilio voice responses
+@app.route("/voice_webhook", methods=['POST'])
+def voice_webhook():
+    # This endpoint will handle the TwiML for Twilio
     response = VoiceResponse()
     gather = Gather(input='speech', timeout=3, action='/process_speech')
     gather.say("Hello! I'm your AI assistant. How can I help you today?")
