@@ -15,7 +15,6 @@ CORS(app)
 load_dotenv()   
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 BUSINESS_HOURS = {'start': 9, 'end': 17}
@@ -146,6 +145,10 @@ def extract_meeting_details(text):
         return None
 
 bot = VoiceBot()
+
+@app.route("/", methods=['GET'])
+def hello():
+    return "Hello, World!"
 
 @app.route("/voice", methods=['POST'])
 def handle_call():
