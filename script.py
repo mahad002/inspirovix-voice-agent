@@ -12,7 +12,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-load_dotenv()   
+load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -29,7 +29,7 @@ class VoiceBot:
         self.twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         self.scheduler = MeetingScheduler()
         self.conversation_state = {}
-        
+
     def detect_intent(self, text):
         response = self.openai_client.chat.completions.create(
             model="gpt-4-mini",
@@ -39,7 +39,7 @@ class VoiceBot:
             ]
         )
         return response.choices[0].message.content.strip().lower()
-        
+
     def get_ai_response(self, text, call_sid):
         conversation = self.conversation_state.get(call_sid, [])
         conversation.append({"role": "user", "content": text})
@@ -53,7 +53,7 @@ class VoiceBot:
         conversation.append({"role": "assistant", "content": ai_response})
         self.conversation_state[call_sid] = conversation
         return ai_response, intent
-        
+
     def schedule_meeting(self, details):
         try:
             success, message = self.scheduler.schedule_meeting(
@@ -70,7 +70,7 @@ class MeetingScheduler:
     def __init__(self):
         self.timezone = pytz.timezone('UTC')
         self.load_meetings()
-    
+
     def load_meetings(self):
         if os.path.exists(MEETINGS_FILE):
             with open(MEETINGS_FILE, 'r') as f:
@@ -78,7 +78,7 @@ class MeetingScheduler:
         else:
             self.meetings = []
             self.save_meetings()
-    
+
     def save_meetings(self):
         with open(MEETINGS_FILE, 'w') as f:
             json.dump(self.meetings, f, indent=2)
@@ -109,21 +109,21 @@ class MeetingScheduler:
         try:
             start_datetime = datetime.datetime.fromisoformat(start_time).replace(tzinfo=self.timezone)
             end_datetime = start_datetime + datetime.timedelta(minutes=duration_minutes)
-            
+
             is_valid, message = self.is_valid_meeting_time(start_datetime, end_datetime)
             if not is_valid:
                 return False, message
-                
+
             if self.check_conflicts(start_datetime, end_datetime):
                 return False, "Time slot is not available"
-                
+
             meeting = {
                 'summary': summary,
                 'start': start_datetime.isoformat(),
                 'end': end_datetime.isoformat(),
                 'attendees': attendees or []
             }
-            
+
             self.meetings.append(meeting)
             self.save_meetings()
             return True, f"Meeting scheduled successfully for {start_datetime.strftime('%Y-%m-%d %H:%M')}"
@@ -178,4 +178,6 @@ def process_speech():
     return str(response)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Use the dynamic port provided by Render
+    port = int(os.environ.get("PORT", 5000))  # Default to 5000 if not set
+    app.run(host='0.0.0.0', port=port, debug=True)
