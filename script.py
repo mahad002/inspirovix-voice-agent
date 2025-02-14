@@ -262,6 +262,10 @@ def process_speech():
     response.append(gather)
     return str(response)
 
+@app.route("/", methods=['GET'])
+def index():
+    return "Welcome to the Voice Assistant API!"
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
