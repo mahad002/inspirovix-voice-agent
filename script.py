@@ -1,14 +1,15 @@
-import openai
+import os
+import logging
+import requests
+import json
+import datetime
+import pytz
+from flask import Flask, request, jsonify
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
-from flask import Flask, request, jsonify
-import datetime
-import json
-import pytz
-import os
 from dotenv import load_dotenv
 from flask_cors import CORS
-import logging
+import openai
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +26,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
+ELEVEN_LABS_VOICE_ID = os.getenv("ELEVEN_LABS_VOICE_ID")
 BUSINESS_HOURS = {'start': 9, 'end': 17}
 WEEKEND_DAYS = (5, 6)
 MINIMUM_NOTICE = datetime.timedelta(hours=1)
@@ -33,6 +36,9 @@ MEETINGS_FILE = 'meetings.json'
 
 # Initialize Twilio client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+# Eleven Labs API URL
+ELEVEN_LABS_API_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_LABS_VOICE_ID}"
 
 # VoiceBot class to handle AI responses and meeting scheduling
 class VoiceBot:
@@ -158,19 +164,25 @@ class MeetingScheduler:
             return False, f"Failed to schedule meeting: {str(e)}"
 
 
-def extract_meeting_details(text):
+def generate_speech(text):
     try:
-        response = bot.openai_client.chat.completions.create(
-            model="gpt-4-mini",
-            messages=[
-                {"role": "system", "content": "Extract meeting details in JSON format with keys: title, datetime, duration, attendees"},
-                {"role": "user", "content": text}
-            ]
-        )
-        details = json.loads(response.choices[0].message.content)
-        return details
-    except Exception as e:
-        logging.error(f"Error extracting meeting details: {e}")
+        headers = {
+            "xi-api-key": ELEVEN_LABS_API_KEY,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.5
+            }
+        }
+        response = requests.post(ELEVEN_LABS_API_URL, headers=headers, json=data)
+        response.raise_for_status()
+        return response.content
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error generating speech: {e}")
         return None
 
 
@@ -193,18 +205,16 @@ def get_meetings():
 @app.route("/voice", methods=['POST'])
 def handle_call():
     try:
-        # Get the phone number from the request
         data = request.form
         to_number = data.get('to')
         
         if not to_number:
             return jsonify({"error": "Phone number is required"}), 400
 
-        # Create a call using Twilio
         call = twilio_client.calls.create(
             to=to_number,
-            from_=TWILIO_PHONE_NUMBER,  # Add this to your .env file
-            url=f"{request.url_root}voice_webhook"  # This will handle the TwiML
+            from_=TWILIO_PHONE_NUMBER,
+            url=f"{request.url_root}voice_webhook"
         )
 
         return jsonify({
@@ -218,9 +228,8 @@ def handle_call():
 # Webhook that handles Twilio voice responses
 @app.route("/voice_webhook", methods=['POST'])
 def voice_webhook():
-    # This endpoint will handle the TwiML for Twilio
     response = VoiceResponse()
-    gather = Gather(input='speech', timeout=3, action='/process_speech')
+    gather = Gather(input='speech', timeout=3, action='/process_speech', speechTimeout='auto', speechModel='default')
     gather.say("Hello! I'm your AI assistant. How can I help you today?")
     response.append(gather)
     return str(response)
@@ -235,23 +244,24 @@ def process_speech():
         return jsonify({"error": "Invalid request"}), 400
 
     ai_response, intent = bot.get_ai_response(speech_result, call_sid)
-    response = VoiceResponse()
+    audio = generate_speech(ai_response)
 
-    if intent == 'scheduling':
-        details = extract_meeting_details(speech_result)
-        if details:
-            success, message = bot.schedule_meeting(details)
-            response.say(message)
-        else:
-            response.say(ai_response)
+    if audio:
+        # Save the audio to a temporary file
+        audio_file = "temp_audio.mp3"
+        with open(audio_file, "wb") as f:
+            f.write(audio)
+
+        response = VoiceResponse()
+        response.play(audio_file)
     else:
+        response = VoiceResponse()
         response.say(ai_response)
 
-    gather = Gather(input='speech', timeout=3, action='/process_speech')
+    gather = Gather(input='speech', timeout=3, action='/process_speech', speechTimeout='auto', speechModel='default')
     response.append(gather)
     return str(response)
 
 if __name__ == "__main__":
-    # Use the dynamic port provided by Render
-    port = int(os.environ.get("PORT", 5000))  # Default to 5000 if not set
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
