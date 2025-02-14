@@ -1,1 +1,19 @@
-[]
+[
+  {
+    "summary": "Project Meeting",
+    "start": "2025-02-20T10:00:00+00:00",
+    "end": "2025-02-20T11:00:00+00:00",
+    "attendees": [
+      "John Doe",
+      "Jane Smith"
+    ]
+  },
+  {
+    "summary": "Another Meeting",
+    "start": "2025-02-21T10:30:00+00:00",
+    "end": "2025-02-21T11:30:00+00:00",
+    "attendees": [
+      "Alice Johnson"
+    ]
+  }
+]

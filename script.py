@@ -2,14 +2,16 @@ import os
 import logging
 import requests
 import json
-import datetime
-import pytz
 from flask import Flask, request, jsonify
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
 from dotenv import load_dotenv
 from flask_cors import CORS
 import openai
+from deepgram import Deepgram
+import pytz
+import datetime
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -28,17 +30,23 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
 ELEVEN_LABS_VOICE_ID = os.getenv("ELEVEN_LABS_VOICE_ID")
-BUSINESS_HOURS = {'start': 9, 'end': 17}
-WEEKEND_DAYS = (5, 6)
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+
 MINIMUM_NOTICE = datetime.timedelta(hours=1)
 MAXIMUM_FUTURE_DAYS = 60
-MEETINGS_FILE = 'meetings.json'
+BUSINESS_HOURS = {'start': 9, 'end': 17}
+WEEKEND_DAYS = [5, 6]  # Saturday and Sunday
+
+MEETINGS_FILE = "meetings.json"
+
+# Eleven Labs API URL
+ELEVEN_LABS_API_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_LABS_VOICE_ID}"
 
 # Initialize Twilio client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# Eleven Labs API URL
-ELEVEN_LABS_API_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_LABS_VOICE_ID}"
+# Initialize Deepgram client
+deepgram = Deepgram(DEEPGRAM_API_KEY)
 
 # VoiceBot class to handle AI responses and meeting scheduling
 class VoiceBot:
@@ -50,7 +58,7 @@ class VoiceBot:
     def detect_intent(self, text):
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4-mini",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Analyze if the user wants to schedule a meeting or just have a conversation. Respond with either 'scheduling' or 'conversation'."},
                     {"role": "user", "content": text}
@@ -72,7 +80,7 @@ class VoiceBot:
                 else "You are a friendly voice assistant. Engage in natural conversation while remembering you can help schedule meetings if needed."
             )
             response = self.openai_client.chat.completions.create(
-                model="gpt-4-mini",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "system", "content": system_prompt}, *conversation]
             )
             ai_response = response.choices[0].message.content.strip()
