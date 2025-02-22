@@ -80,7 +80,7 @@ class VoiceBot:
                 else "You are a friendly voice assistant. Engage in natural conversation while remembering you can help schedule meetings if needed."
             )
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[{"role": "system", "content": system_prompt}, *conversation]
             )
             ai_response = response.choices[0].message.content.strip()
